@@ -102,7 +102,9 @@ export default function LiveNavigation() {
   const [error, setError] = useState<string | null>(null);
   const [isTracking, setIsTracking] = useState(false);
   const [hasArrived, setHasArrived] = useState(false);
+  const [useMockLocation, setUseMockLocation] = useState(false);
   const watchIdRef = useRef<number | null>(null);
+  const mockLocationIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const destination = selectedDestination
     ? locations.find((loc) => loc.id === selectedDestination)
@@ -110,16 +112,54 @@ export default function LiveNavigation() {
 
   const centerLocation = currentLocation || { lat: 17.5439, lng: 78.5748 };
 
+  const simulateMockLocationMovement = (destLat: number, destLng: number) => {
+    let step = 0;
+    const startLat = 17.5439;
+    const startLng = 78.5748;
+    const steps = 50;
+
+    mockLocationIntervalRef.current = setInterval(() => {
+      step++;
+      const progress = Math.min(step / steps, 1);
+
+      const newLat = startLat + (destLat - startLat) * progress;
+      const newLng = startLng + (destLng - startLng) * progress;
+
+      setCurrentLocation({
+        lat: newLat,
+        lng: newLng,
+      });
+
+      const dist = calculateDistance(newLat, newLng, destLat, destLng);
+      if (dist < 0.02 && !hasArrived) {
+        setHasArrived(true);
+        speak(`You have arrived at ${destination?.name}`);
+        if (mockLocationIntervalRef.current) {
+          clearInterval(mockLocationIntervalRef.current);
+        }
+      }
+
+      if (progress >= 1) {
+        if (mockLocationIntervalRef.current) {
+          clearInterval(mockLocationIntervalRef.current);
+        }
+      }
+    }, 300);
+  };
+
   useEffect(() => {
+    setIsTracking(true);
+    setError(null);
+
     if ('geolocation' in navigator) {
-      setIsTracking(true);
-      watchIdRef.current = navigator.geolocation.watchPosition(
+      const watchId = navigator.geolocation.watchPosition(
         (position) => {
           const newLocation = {
             lat: position.coords.latitude,
             lng: position.coords.longitude,
           };
           setCurrentLocation(newLocation);
+          setUseMockLocation(false);
           setError(null);
 
           if (destination) {
@@ -136,22 +176,29 @@ export default function LiveNavigation() {
           }
         },
         (err) => {
-          setError('Unable to get your location. Please enable location services.');
-          console.error(err);
+          console.log('Geolocation error, using mock location:', err);
+          setUseMockLocation(true);
+          setCurrentLocation({ lat: 17.5439, lng: 78.5748 });
         },
         {
-          enableHighAccuracy: true,
-          timeout: 5000,
+          enableHighAccuracy: false,
+          timeout: 3000,
           maximumAge: 0,
         }
       );
+
+      watchIdRef.current = watchId;
     } else {
-      setError('Geolocation is not supported by your browser');
+      setUseMockLocation(true);
+      setCurrentLocation({ lat: 17.5439, lng: 78.5748 });
     }
 
     return () => {
       if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+      if (mockLocationIntervalRef.current) {
+        clearInterval(mockLocationIntervalRef.current);
       }
     };
   }, [destination, hasArrived]);
@@ -200,6 +247,12 @@ export default function LiveNavigation() {
     const loc = locations.find((l) => l.id === locId);
     if (loc) {
       speak(`Navigating to ${loc.name}`);
+      if (useMockLocation) {
+        if (mockLocationIntervalRef.current) {
+          clearInterval(mockLocationIntervalRef.current);
+        }
+        simulateMockLocationMovement(loc.latitude, loc.longitude);
+      }
     }
   };
 
@@ -344,7 +397,9 @@ export default function LiveNavigation() {
         {isTracking && (
           <div className="absolute top-4 left-4 bg-white px-4 py-2 rounded-full shadow-lg flex items-center z-[1000]">
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse mr-2"></div>
-            <span className="text-sm font-medium text-gray-700">Live Tracking</span>
+            <span className="text-sm font-medium text-gray-700">
+              {useMockLocation ? 'Simulated Mode' : 'Live Tracking'}
+            </span>
           </div>
         )}
       </div>
